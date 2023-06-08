@@ -1,42 +1,81 @@
 use abi_stable::std_types::{ROption, RString, RVec};
 use anyrun_plugin::*;
-use serde::Deserialize;
+use fuzzy_matcher::FuzzyMatcher;
+use serde::{Deserialize, Deserializer};
 use std::io::{self, stdin, Write};
 use std::process::Command;
+use url::Url;
 
 #[derive(Deserialize, Debug)]
 struct OpItem {
     id: String,
     title: String,
     category: String,
+    #[serde(default)]
+    urls: Vec<OpUrl>,
+}
+
+#[derive(Deserialize, Debug)]
+struct OpUrl {
+    #[serde(deserialize_with = "host_from_url")]
+    href: Option<String>,
+}
+
+fn host_from_url<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+
+    Url::parse(&s)
+        .map(|u| u.host_str().map(|s| s.to_string()))
+        .or(Ok(Some(s)))
 }
 
 #[derive(Debug)]
 enum Error {
     OpCommandFailed(io::Error),
+    OpReturnCodeError { exit_code: i32 },
     ReadOutputError(std::string::FromUtf8Error),
     ParsingError(serde_json::Error),
 }
 
 struct State {
-    items: Vec<OpItem>,
+    items: Vec<(usize, OpItem)>,
 }
 
-#[init]
-fn init(config_dir: RString) -> State {
-    let output = Command::new("op")
-        .args(["item", "list", "--format=json"])
+fn execute_command(cmd: &str, args: &[&str]) -> Result<String, Error> {
+    let output = Command::new(cmd)
+        .args(args)
         .output()
         .map_err(Error::OpCommandFailed);
 
-    let content = output.and_then(|o| String::from_utf8(o.stdout).map_err(Error::ReadOutputError));
+    output.and_then(|o| {
+        if o.status.success() {
+            String::from_utf8(o.stdout).map_err(Error::ReadOutputError)
+        } else {
+            Err(Error::OpReturnCodeError {
+                exit_code: o.status.code().unwrap(),
+            })
+        }
+    })
+}
+
+const ITEM_LIST_ARGS: [&str; 3] = ["item", "list", "--format=json"];
+const DEFAULT_OP_CMD: &str = "op";
+
+#[init]
+fn init(config_dir: RString) -> State {
+    let content = match execute_command(DEFAULT_OP_CMD, &ITEM_LIST_ARGS) {
+        Err(Error::OpReturnCodeError { exit_code: _ }) => execute_command("op", &ITEM_LIST_ARGS),
+        other => other,
+    };
 
     let op_items = content
-        .and_then(|s| serde_json::from_str::<Vec<OpItem>>(s.as_str()).map_err(Error::ParsingError));
+        .and_then(|s| serde_json::from_str::<Vec<OpItem>>(s.as_str()).map_err(Error::ParsingError))
+        .map(|items| items.into_iter().enumerate().collect::<Vec<_>>());
 
-    println!("{:?}", op_items);
-
-    op_items.map(|items| State{items}).unwrap()
+    op_items.map(|items| State { items }).unwrap()
 }
 
 #[info]
@@ -49,16 +88,41 @@ fn info() -> PluginInfo {
 
 #[get_matches]
 fn get_matches(input: RString, state: &State) -> RVec<Match> {
-    // The logic to get matches from the input text in the `input` argument.
-    // The `data` is a mutable reference to the shared data type later specified.
-    vec![Match {
-        title: "Test match".into(),
-        icon: ROption::RSome("help-about".into()),
-        use_pango: false,
-        description: ROption::RSome("Test match for the plugin API demo".into()),
-        id: ROption::RNone, // The ID can be used for identifying the match la =ter, is not required
-    }]
-    .into()
+    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default().smart_case();
+
+    let mut entries = state
+        .items
+        .iter()
+        .filter_map(|(id, e)| {
+            let title_score = matcher.fuzzy_match(&e.title, &input).unwrap_or(0);
+            let domain_score = e
+                .urls
+                .iter()
+                .flat_map(|u| u.href.clone())
+                .map(|domain| matcher.fuzzy_match(&domain, &input).unwrap_or(0))
+                .max()
+                .unwrap_or(0);
+            let score = std::cmp::max(title_score, domain_score);
+            if score > 0 {
+                Some((id, e, score))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|a, b| b.2.cmp(&a.2));
+    entries.truncate(10);
+
+    entries
+        .into_iter()
+        .map(|(id, e, _)| Match {
+            title: e.title.clone().into(),
+            icon: ROption::RNone,
+            use_pango: false,
+            description: ROption::RNone,
+            id: ROption::RSome(*id as u64),
+        })
+        .collect()
 }
 
 #[handler]
