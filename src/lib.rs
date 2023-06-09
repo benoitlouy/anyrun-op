@@ -159,6 +159,7 @@ fn get_matches(input: RString, state: &State) -> RVec<Match> {
                 })
                 .collect()
         }
+
         Some(selection) => {
             let username = selection.username.as_ref().map(|_| Match {
                 title: "Username".into(),
@@ -216,7 +217,7 @@ fn handler(selection: Match, state: &mut State) -> HandleResult {
                         serde_json::from_str::<OpGetItem>(s.as_str()).map_err(Error::ParsingError)
                     })
                     .unwrap();
-            println!("{:?}", selected_item);
+
             let username = selected_item.fields.iter().find_map(|f| {
                 if f.id == "username" {
                     f.value.clone()
@@ -224,6 +225,7 @@ fn handler(selection: Match, state: &mut State) -> HandleResult {
                     None
                 }
             });
+
             let password = selected_item.fields.iter().find_map(|f| {
                 if f.id == "password" {
                     f.value.clone()
@@ -233,6 +235,7 @@ fn handler(selection: Match, state: &mut State) -> HandleResult {
             });
 
             let has_otp = selected_item.fields.iter().any(|f| f.tpe == "OTP");
+
             state.selection = Some(Selection {
                 id,
                 username,
@@ -241,6 +244,7 @@ fn handler(selection: Match, state: &mut State) -> HandleResult {
             });
             HandleResult::Refresh(true)
         }
+
         Some(s) => match selection.id {
             ROption::RSome(0) => HandleResult::Copy(s.username.as_ref().unwrap().as_bytes().into()),
             ROption::RSome(1) => HandleResult::Copy(s.password.as_ref().unwrap().as_bytes().into()),
