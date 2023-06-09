@@ -2,7 +2,7 @@ use abi_stable::std_types::{ROption, RString, RVec};
 use anyrun_plugin::*;
 use fuzzy_matcher::FuzzyMatcher;
 use serde::{Deserialize, Deserializer};
-use std::io::{self, stdin, Write};
+use std::io;
 use std::process::Command;
 use url::Url;
 
@@ -41,7 +41,7 @@ enum Error {
 }
 
 struct State {
-    items: Vec<(usize, OpItem)>,
+    items: Vec<(u64, OpItem)>,
 }
 
 fn execute_command(cmd: &str, args: &[&str]) -> Result<String, Error> {
@@ -73,7 +73,14 @@ fn init(config_dir: RString) -> State {
 
     let op_items = content
         .and_then(|s| serde_json::from_str::<Vec<OpItem>>(s.as_str()).map_err(Error::ParsingError))
-        .map(|items| items.into_iter().enumerate().collect::<Vec<_>>());
+        .map(|items| {
+            items
+                .into_iter()
+                .filter(|i| i.category == "PASSWORD" || i.category == "LOGIN")
+                .enumerate()
+                .map(|(id, item)| (id as u64, item))
+                .collect::<Vec<_>>()
+        });
 
     op_items.map(|items| State { items }).unwrap()
 }
@@ -127,6 +134,19 @@ fn get_matches(input: RString, state: &State) -> RVec<Match> {
 
 #[handler]
 fn handler(selection: Match, state: &State) -> HandleResult {
-    // Handle the selected match and return how anyrun should proceed
-    HandleResult::Close
+    let id = state
+        .items
+        .iter()
+        .find_map(|(id, item)| {
+            if *id == selection.id.unwrap() {
+                Some(item.id.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap();
+
+    execute_command("op", &["items", "get", id.as_str(), "--field", "password"])
+        .map(|password| HandleResult::Copy(password.trim().as_bytes().into()))
+        .unwrap()
 }
