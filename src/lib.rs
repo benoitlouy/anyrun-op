@@ -152,8 +152,8 @@ fn init(config_dir: RString) -> State {
 #[info]
 fn info() -> PluginInfo {
     PluginInfo {
-        name: "op".into(),
-        icon: "help-about".into(), // Icon from the icon theme
+        name: "1password".into(),
+        icon: "1password".into(), // Icon from the icon theme
     }
 }
 
