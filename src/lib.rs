@@ -98,6 +98,9 @@ struct Selection {
     username: Option<String>,
     password: Option<String>,
     has_otp: bool,
+    ccnum: Option<String>,
+    cvv: Option<String>,
+    expiry: Option<String>,
 }
 
 fn execute_command(cmd: &str, args: &[&str]) -> Result<String, Error> {
@@ -133,7 +136,7 @@ fn init(config_dir: RString) -> State {
         .map(|items| {
             items
                 .into_iter()
-                .filter(|i| i.category == "PASSWORD" || i.category == "LOGIN")
+                .filter(|i| i.category == "PASSWORD" || i.category == "LOGIN" || i.category == "CREDIT_CARD")
                 .enumerate()
                 .map(|(id, item)| (id as u64, item))
                 .collect::<Vec<_>>()
@@ -243,6 +246,7 @@ fn display_selection_items(selection: &Selection) -> RVec<Match> {
         description: ROption::RNone,
         id: ROption::RSome(0),
     });
+
     let password = selection.password.as_ref().map(|_| Match {
         title: "Password".into(),
         icon: ROption::RNone,
@@ -250,6 +254,7 @@ fn display_selection_items(selection: &Selection) -> RVec<Match> {
         description: ROption::RNone,
         id: ROption::RSome(1),
     });
+
     let otp = if selection.has_otp {
         Some(Match {
             title: "One-time password".into(),
@@ -261,7 +266,32 @@ fn display_selection_items(selection: &Selection) -> RVec<Match> {
     } else {
         None
     };
-    vec![username, password, otp]
+
+    let ccnum = selection.ccnum.as_ref().map(|_| Match {
+        title: "Number".into(),
+        icon: ROption::RNone,
+        use_pango: false,
+        description: ROption::RNone,
+        id: ROption::RSome(3),
+    });
+
+    let ccv = selection.cvv.as_ref().map(|_| Match {
+        title: "CCV".into(),
+        icon: ROption::RNone,
+        use_pango: false,
+        description: ROption::RNone,
+        id: ROption::RSome(4),
+    });
+
+    let expiry = selection.expiry.as_ref().map(|_| Match {
+        title: "Expiry".into(),
+        icon: ROption::RNone,
+        use_pango: false,
+        description: ROption::RNone,
+        id: ROption::RSome(5),
+    });
+
+    vec![username, password, otp, ccnum, ccv, expiry]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>()
@@ -311,11 +341,38 @@ fn handler(selection: Match, state: &mut State) -> HandleResult {
 
             let has_otp = selected_item.fields.iter().any(|f| f.tpe == "OTP");
 
+            let ccnum = selected_item.fields.iter().find_map(|f| {
+                if f.id == "ccnum" {
+                    f.value.clone()
+                } else {
+                    None
+                }
+            });
+
+            let cvv = selected_item.fields.iter().find_map(|f| {
+                if f.id == "cvv" {
+                    f.value.clone()
+                } else {
+                    None
+                }
+            });
+
+            let expiry = selected_item.fields.iter().find_map(|f| {
+                if f.id == "expiry" {
+                    f.value.clone()
+                } else {
+                    None
+                }
+            });
+
             state.selection = Some(Selection {
                 id,
                 username,
                 password,
                 has_otp,
+                ccnum,
+                cvv,
+                expiry,
             });
 
             HandleResult::Refresh(true)
@@ -330,6 +387,9 @@ fn handler(selection: Match, state: &mut State) -> HandleResult {
             )
             .map(|otp| HandleResult::Copy(otp.trim().as_bytes().into()))
             .unwrap(),
+            ROption::RSome(3) => HandleResult::Copy(s.ccnum.as_ref().unwrap().as_bytes().into()),
+            ROption::RSome(4) => HandleResult::Copy(s.cvv.as_ref().unwrap().as_bytes().into()),
+            ROption::RSome(5) => HandleResult::Copy(s.expiry.as_ref().unwrap().as_bytes().into()),
             _ => HandleResult::Close,
         },
     }
